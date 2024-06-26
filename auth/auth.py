@@ -2,15 +2,19 @@ import math
 import os
 import random
 import secrets
+from typing import List
+
 import jwt
 from datetime import datetime, timedelta
 
-from auth.schemes import Sms_send, Sms_check
-from auth.utils import generate_token
-from models.models import Driver
+from auth.schemes import Sms_send, Sms_check, Driver_register, Get_regions, Get_districts, Add_car_service, \
+    Add_announcement
+from auth.utils import generate_token, verify_token
+from models.models import Driver, Region, District, Services, Announcement, AnnouncementService
 from database import get_async_session
-from sqlalchemy import select, insert
+from sqlalchemy import select, insert, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import NoResultFound
 from fastapi import Depends, APIRouter, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -18,11 +22,11 @@ from passlib.context import CryptContext
 import redis
 import math
 import random
+
 # from .utils import generate_token, verify_token
 
 register_router = APIRouter()
 pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
-
 
 # Connect to the Redis server
 redis_client = redis.Redis(host='localhost', port=6379, db=0)
@@ -60,16 +64,91 @@ async def send_sms(model: Sms_send):
 
 @register_router.post('/check_sms')
 async def check_sms(model: Sms_check, session: AsyncSession = Depends(get_async_session)):
-    if check_code(model.phone, model.code):
-        query = select(Driver).where(Driver.phone == model.phone)
-        res = await session.execute(query)
-        result = res.scalar_one_or_none()
-        if result:
-            token = generate_token(result.id)
-            return {"token": token}
-        else:
-            raise HTTPException(status_code=404, detail="Driver not found")
-    else:
+    if not check_code(model.phone, model.code):
         raise HTTPException(status_code=400, detail="Invalid code")
 
+    query = select(Driver).where(Driver.phone == model.phone)
+    res = await session.execute(query)
+    result = res.scalar_one_or_none()
+    if result:
+        token = generate_token(result.id)
+        return {"token": token}
+    else:
+        raise HTTPException(status_code=404, detail="Driver not found")
 
+
+@register_router.post('/register_driver')
+async def register_driver(model: Driver_register, session: AsyncSession = Depends(get_async_session)):
+    query = insert(Driver).values(**model.dict(), register_at=datetime.utcnow())
+    await session.execute(query)
+    await session.commit()
+    return HTTPException(status_code=201, detail="Registered")
+
+
+@register_router.get('/get_regions', response_model=List[Get_regions])
+async def get_regions(session: AsyncSession = Depends(get_async_session)):
+    query = select(Region)
+    res = await session.execute(query)
+    result = res.scalars().all()
+    return result
+
+
+@register_router.get('/get_districts', response_model=List[Get_districts])
+async def get_districts(region_id: int, session: AsyncSession = Depends(get_async_session)):
+    query = select(District).options(selectinload(District.region)).where(District.region_id == region_id)
+    res = await session.execute(query)
+    districts = res.scalars().all()
+
+    # Transform the result to match the Pydantic model
+    result = [
+        Get_districts(
+            id=district.id,
+            district=district.district,
+            region_id=Get_regions(
+                id=district.region.id,
+                region=district.region.region
+            )
+        ) for district in districts
+    ]
+
+    return result
+
+
+@register_router.post('/add_announcement')
+async def add_announcement(model: Add_announcement, token: dict = Depends(verify_token),
+                           session: AsyncSession = Depends(get_async_session)):
+    if token is None:
+        return HTTPException(status_code=401, detail="Unauthorized")
+
+    driver_id = token.get('user_id')
+    announcement = Announcement(
+        car_id=model.car_id,
+        driver_id=driver_id,
+        max_price=model.max_price,
+        min_price=model.min_price,
+        description=model.description,
+        added_at=datetime.utcnow(),
+        is_active=True
+    )
+    session.add(announcement)
+    await session.flush()
+    announcement_id = announcement.id
+
+    announcement_services = [
+        AnnouncementService(announcement_id=announcement_id, service_id=service_id)
+        for service_id in model.service_id
+    ]
+    session.add_all(announcement_services)
+    await session.commit()
+
+    return {'success': True}
+
+
+@register_router.post('/add_car_service')
+async def add_car_service(model: Add_car_service, session: AsyncSession = Depends(get_async_session)):
+    services_data = [{"name": name, "car_id": model.car_id} for name in model.names]
+    query = insert(Services)
+    await session.execute(query, services_data)
+    await session.commit()
+
+    return {'success': True}

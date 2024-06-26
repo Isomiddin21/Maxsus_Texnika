@@ -81,7 +81,7 @@ class Announcement(Base):
     min_price = Column(Float)
     description = Column(String)
     added_at = Column(Date, default=datetime.utcnow)
-    is_active = Column(Boolean)
+    is_active = Column(Boolean,default=True)
 
     @validates('min_price')
     def validate_min_price(self, key, value):
