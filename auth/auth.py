@@ -73,13 +73,3 @@ async def check_sms(model: Sms_check, session: AsyncSession = Depends(get_async_
         raise HTTPException(status_code=400, detail="Invalid code")
 
 
-# # Main program
-# a = input("Enter phone: ")
-# code = generate_code(a)
-# print(f"Generated code: {code}")
-# save_code(a, code, 60)
-# check = input("Enter verification code: ")
-# if check_code(a, check):
-#     print("Verified✅")
-# else:
-#     print("Incorrect code")
