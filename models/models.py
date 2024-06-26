@@ -102,3 +102,5 @@ class AnnouncementService(Base):
 
     announcement = relationship('Announcement', back_populates='announcement_services')
     service = relationship('Services', back_populates='announcement_services')
+
+
